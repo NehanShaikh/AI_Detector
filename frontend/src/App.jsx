@@ -65,6 +65,12 @@ function formatPercent(value) {
 
 }
 
+function capitalizeLabel(value) {
+  if (!value) return "Unknown";
+  const text = String(value);
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function formatSeconds(value) {
 
   const number = Number(value);
@@ -258,7 +264,7 @@ function ScoreList({ predictions }) {
 
           <div className="score-label">
 
-            <span>{prediction.label || "Unknown"}</span>
+            <span>{capitalizeLabel(prediction.label)}</span>
 
             <strong>{formatPercent(prediction.score)}</strong>
 
@@ -322,7 +328,7 @@ function ModelSummary({ classification, title, subtitle }) {
 
         Top prediction:{" "}
 
-        <strong>{classification.top_label || "Unknown"}</strong>
+        <strong>{capitalizeLabel(classification.top_label)}</strong>
 
       </p>
 
@@ -1327,7 +1333,7 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
                   <span className="muted">Overall image model</span>
 
-                  <h3>{overall.top_label || "Unknown"}</h3>
+                  <h3>{capitalizeLabel(overall.top_label)}</h3>
 
                   <p>
 
