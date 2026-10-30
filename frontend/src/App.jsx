@@ -65,6 +65,17 @@ function formatPercent(value) {
 
 }
 
+function cleanThresholdText(value) {
+  if (!value) return "";
+  return String(value)
+    // Remove numeric threshold references from backend-generated display text.
+    .replace(/(?:the\s+)?\d+(?:\.\d+)?%\s+(?:(?:verdict|heuristic|configured)\s+)?threshold/gi, "")
+    .replace(/(?:verdict|heuristic|configured)?\s*threshold\s*[:=]?\s*\d*(?:\.\d+)?%?/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.])/g, "$1")
+    .trim();
+}
+
 function capitalizeLabel(value) {
   if (!value) return "Unknown";
   const text = String(value);
@@ -192,6 +203,73 @@ function getClassScore(classification, acceptedLabels) {
   return Number.isFinite(score) ? score : null;
 }
 
+function getImageSignalGroup(label) {
+  const value = String(label || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replaceAll("-", " ");
+
+  if (!value) return null;
+
+  if (/fake|artificial|ai generated|synthetic|generated|deepfake|deep fake/.test(value)) {
+    return "ai";
+  }
+
+  if (/real|human|authentic|natural/.test(value)) {
+    return "real";
+  }
+
+  return null;
+}
+
+function getCombinedImageAssessment(overall, faceRegions) {
+  const overallGroup = getImageSignalGroup(overall?.top_label);
+
+  const classifiedFaces = (Array.isArray(faceRegions) ? faceRegions : [])
+    .map((face) =>
+      getImageSignalGroup(face?.classification?.top_label)
+    )
+    .filter(Boolean);
+
+  if (!overallGroup) {
+    return {
+      status: "insufficient",
+      title: "Inconclusive — insufficient model signals",
+      detail: "The overall image model did not return a recognizable real-vs-AI label.",
+    };
+  }
+
+  if (classifiedFaces.length === 0) {
+    return {
+      status: "insufficient",
+      title: "Inconclusive — face signal unavailable",
+      detail: "No classifiable face-crop result is available for comparison.",
+    };
+  }
+
+  const allAgree = classifiedFaces.every(
+    (signal) => signal === overallGroup
+  );
+
+  if (!allAgree) {
+    return {
+      status: "mixed",
+      title: "Mixed model signals",
+      detail: "The overall image model and one or more face-crop results disagree. Review the individual predictions.",
+    };
+  }
+
+  return {
+    status: overallGroup === "ai" ? "aligned-ai" : "aligned-real",
+    title:
+      overallGroup === "ai"
+        ? "Signals align — AI-generated indicators"
+        : "Signals align — real-image indicators",
+    detail: `The overall image model and ${classifiedFaces.length} classified face-crop result(s) returned labels in the same category. This is model agreement, not proof of authenticity.`,
+  };
+}
+
 function getFrameSignals(frame) {
   const artificial = getClassScore(frame?.classification, [
     "fake", "artificial", "ai generated", "synthetic", "generated",
@@ -236,7 +314,22 @@ function makeDisplayReport(result) {
 
   });
 
-  return copy;
+  // Keep threshold configuration out of the visible technical report and JSON export.
+  function removeThresholdFields(value) {
+    if (Array.isArray(value)) return value.map(removeThresholdFields);
+    if (value && typeof value === "object") {
+      const cleaned = {};
+      Object.entries(value).forEach(([key, item]) => {
+        if (/threshold/i.test(key)) return;
+        cleaned[key] = removeThresholdFields(item);
+      });
+      return cleaned;
+    }
+    if (typeof value === "string") return cleanThresholdText(value);
+    return value;
+  }
+
+  return removeThresholdFields(copy);
 
 }
 
@@ -401,7 +494,7 @@ function FaceRegionCard({ face }) {
 
             <div>
 
-              <strong>{classification.top_label || "Unknown"}</strong>
+              <strong>{capitalizeLabel(classification.top_label)}</strong>
 
               <small>
 
@@ -435,7 +528,7 @@ function FaceRegionCard({ face }) {
 
           <Info size={15} />
 
-          {face.warning}
+          {cleanThresholdText(face.warning)}
 
         </p>
 
@@ -475,7 +568,7 @@ function VideoFrameCard({ frame }) {
 
           <div className="frame-label">
 
-            <strong>{classification.top_label || "Unknown"}</strong>
+            <strong>{capitalizeLabel(classification.top_label)}</strong>
 
             <small>{formatPercent(classification.top_score)}</small>
 
@@ -623,9 +716,9 @@ function FaceAnalysisSummary({ summary }) {
 
       </p>
 
-      {summary.face_signal_reason && <p className="muted">{summary.face_signal_reason}</p>}
+      {summary.face_signal_reason && <p className="muted">{cleanThresholdText(summary.face_signal_reason)}</p>}
 
-      {summary.note && <p className="disclaimer"><Info size={15} /> {summary.note}</p>}
+      {summary.note && <p className="disclaimer"><Info size={15} /> {cleanThresholdText(summary.note)}</p>}
 
     </div>
 
@@ -749,7 +842,7 @@ function TemporalAnalysisSummary({ summary }) {
 
       )}
 
-      {summary.note && <p className="disclaimer"><Info size={15} /> {summary.note}</p>}
+      {summary.note && <p className="disclaimer"><Info size={15} /> {cleanThresholdText(summary.note)}</p>}
 
     </div>
 
@@ -760,11 +853,8 @@ function TemporalAnalysisSummary({ summary }) {
 
 function EvidenceTimeline({ result }) {
   const frames = Array.isArray(result.frame_results) ? result.frame_results : [];
-  const threshold = Number(
-    result.evidence_summary?.threshold ??
-    result.summary?.verdict_threshold ??
-    0.65
-  );
+  // Internal review threshold: 55%. It is intentionally not shown in the UI.
+  const threshold = 0.55;
   const noteworthy = Array.isArray(result.evidence_summary?.noteworthy_signals)
     ? result.evidence_summary.noteworthy_signals
     : [];
@@ -787,8 +877,7 @@ function EvidenceTimeline({ result }) {
         </div>
       </div>
       <p className="muted">
-        Highlighted markers mean a model score crossed the configured heuristic
-        threshold. They are review cues, not proof of manipulation.
+        Highlighted markers indicate model scores selected for further review. They are review cues, not proof of manipulation.
       </p>
       <div className="timeline-track" role="list" aria-label="Sampled video frame evidence">
         {frames.map((frame, index) => {
@@ -829,17 +918,17 @@ function EvidenceTimeline({ result }) {
                   {item.type === "face_model_signal" ? "Face-model signal" : "Frame-model signal"}
                   {" · "}Frame {item.frame_index}
                 </strong>
-                <small>{formatSeconds(item.timestamp_seconds)} · Score {formatPercent(item.score)} · Threshold {formatPercent(item.threshold ?? threshold)}</small>
+                <small>{formatSeconds(item.timestamp_seconds)} · Score {formatPercent(item.score)}</small>
               </div>
               <a href={`#frame-${item.frame_index}`}>View frame</a>
-              <p>{item.description || "Elevated model score flagged for review."}</p>
+              <p>{cleanThresholdText(item.description) || "Elevated model score flagged for review."}</p>
             </div>
           ))}
         </div>
       )}
       <p className="disclaimer">
         <Info size={15} />
-        {result.evidence_summary?.interpretation_note ||
+        {cleanThresholdText(result.evidence_summary?.interpretation_note) ||
           "Scores are model outputs, not calibrated probabilities or proof of authenticity."}
       </p>
     </div>
@@ -879,7 +968,7 @@ function VideoSummary({ result }) {
   const labelCounts = summary.label_counts || {};
 
   const verdict = summary.verdict || "inconclusive";
-  const verdictReason = summary.verdict_reason || summary.frame_signal_reason ||
+  const verdictReason = cleanThresholdText(summary.verdict_reason || summary.frame_signal_reason) ||
     "The backend did not return a specific reason for the assessment.";
   const verdictClass = verdict === "likely_fake" ? "verdict-caution" :
     verdict === "likely_real" ? "verdict-neutral" : "verdict-inconclusive";
@@ -1082,7 +1171,7 @@ function VideoSummary({ result }) {
 
         {summary.verdict_reason && (
 
-          <p className="muted">{summary.verdict_reason}</p>
+          <p className="muted">{cleanThresholdText(summary.verdict_reason)}</p>
 
         )}
 
@@ -1091,14 +1180,7 @@ function VideoSummary({ result }) {
           <p className="muted">Verdict basis: {summary.final_verdict_basis}</p>
 
         )}
-
-        {summary.verdict_threshold != null && (
-
-          <p className="muted">Heuristic threshold: {formatPercent(summary.verdict_threshold)}</p>
-
-        )}
-
-      </div>
+</div>
 
       <FaceAnalysisSummary summary={result.face_analysis_summary} />
 
@@ -1132,7 +1214,7 @@ function VideoSummary({ result }) {
 
           <br />
 
-          {result.warning ||
+          {cleanThresholdText(result.warning) ||
 
             "Only sampled frames were analyzed. Temporal video manipulation was not checked."}
 
@@ -1307,15 +1389,41 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
         <>
 
-          <section className="final-verdict verdict-inconclusive">
-            <div className="verdict-icon"><ShieldCheck size={23} /></div>
-            <div className="verdict-copy">
-              <p className="eyebrow">IMAGE ASSESSMENT</p>
-              <h3>Separate model signals — no combined verdict</h3>
-              <p>{result.assessment_policy?.reason || "The overall image classifier and face-crop classifier are separate signals and are not combined into one authenticity verdict."}</p>
-              <small>A model score does not prove that an image is genuine or manipulated.</small>
-            </div>
-          </section>
+          {(() => {
+  const assessment = getCombinedImageAssessment(overall, faceRegions);
+
+  const verdictClass =
+    assessment.status === "mixed" ||
+    assessment.status === "insufficient"
+      ? "verdict-inconclusive"
+      : assessment.status === "aligned-ai"
+        ? "verdict-caution"
+        : "verdict-neutral";
+
+  return (
+    <section className={`final-verdict ${verdictClass}`}>
+      <div className="verdict-icon">
+        <ShieldCheck size={23} />
+      </div>
+
+      <div className="verdict-copy">
+        <p className="eyebrow">
+          COMBINED IMAGE SIGNAL ASSESSMENT
+        </p>
+
+        <h3>{assessment.title}</h3>
+
+        <p>{assessment.detail}</p>
+
+        <small>
+          This compares model labels only. Scores are not averaged
+          or treated as calibrated probabilities. This is not proof
+          of authenticity or manipulation.
+        </small>
+      </div>
+    </section>
+  );
+})()}
 
           {overall && (
 
@@ -1425,7 +1533,7 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
             {result.region_analysis_note && (
 
-              <p className="muted">{result.region_analysis_note}</p>
+              <p className="muted">{cleanThresholdText(result.region_analysis_note)}</p>
 
             )}
 
@@ -1436,20 +1544,15 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
             <Info size={19} />
 
             <p>
-
-              <strong>Interpret results separately</strong>
-
-              <br />
-
-              The overall image classifier and face classifier are
-
-              different models. Their scores are not combined into a
-
-              single verdict. A face-crop "fake" prediction is an
-              AI-generated-vs-real estimate, not a dedicated face-swap finding.
-              A "real" prediction also does not prove authenticity.
-
-            </p>
+  <strong>How to read the combined assessment</strong>
+  <br />
+  The combined section checks whether the overall image label
+  and available face-crop labels agree or disagree. It does not
+  average their scores. A face-crop "fake" prediction is an
+  AI-generated-vs-real estimate, not a dedicated face-swap finding.
+  Agreement does not prove authenticity, and disagreement should
+  be treated as inconclusive.
+</p>
 
           </div>
 
@@ -1479,7 +1582,7 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
             {warnings.map((warning, index) => (
 
-              <li key={index}>{warning}</li>
+              <li key={index}>{cleanThresholdText(warning)}</li>
 
             ))}
 
@@ -1507,7 +1610,7 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
             {limitations.map((item, index) => (
 
-              <li key={index}>{item}</li>
+              <li key={index}>{cleanThresholdText(item)}</li>
 
             ))}
 
