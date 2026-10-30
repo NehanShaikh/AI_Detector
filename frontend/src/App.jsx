@@ -1913,23 +1913,20 @@ export default function App() {
         }
       `}</style>
 
-      <header className="topbar">
+      
+<header className="topbar">
+  <a className="brand" href="#">
+    <img
+      src="/logo.png"
+      alt="MediaForensics AI Logo"
+      className="brand-logo"
+    />
 
-        <a className="brand" href="#">
+    <span>
+      Media<span className="brand-accent">ForensicsAI</span>
+    </span>
+  </a>
 
-          <span className="brand-mark">
-
-            <ShieldCheck size={22} />
-
-          </span>
-
-          <span>
-
-            Media<span className="brand-accent">ForensicsAI</span>
-
-          </span>
-
-        </a>
 
         <div className="topbar-right">
           <span className="status-dot" />

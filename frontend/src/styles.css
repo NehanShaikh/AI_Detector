@@ -22,7 +22,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .app-shell { min-height: 100vh; }
 .topbar { height: 72px; display:flex; align-items:center; justify-content:space-between; max-width:1200px; margin:auto; padding:0 28px; border-bottom:1px solid rgba(148,163,184,.12); }
 .brand { display:flex; align-items:center; gap:10px; color:#f8fafc; text-decoration:none; font:700 18px 'Space Grotesk',sans-serif; letter-spacing:-.5px; }
-.brand-mark { display:grid; place-items:center; width:36px; height:36px; border:1px solid #3d4b72; border-radius:11px; color:#a5b4fc; background:#19233a; }
+.brand-logo {
+  width: 45px;
+  height: 45px;
+  object-fit: contain;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 .brand-accent { color:#a5b4fc; }
 .topbar-right { display:flex; align-items:center; gap:8px; color:#9aa8bd; font-size:12px; }
 .status-dot { width:7px; height:7px; border-radius:50%; background:#7dd3a8; box-shadow:0 0 12px #7dd3a855; }
@@ -367,11 +373,11 @@ canvas {
     letter-spacing: -0.4px;
   }
 
-  .brand-mark {
-    width: 33px;
-    height: 33px;
-    flex-shrink: 0;
-  }
+  .brand-logo {
+  width: 33px;
+  height: 33px;
+  flex-shrink: 0;
+}
 
   .topbar-right {
     min-width: 0;
@@ -786,10 +792,10 @@ canvas {
     gap: 6px;
   }
 
-  .brand-mark {
-    width: 29px;
-    height: 29px;
-  }
+  .brand-logo {
+  width: 29px;
+  height: 29px;
+}
 
   .topbar-right {
     gap: 5px;
