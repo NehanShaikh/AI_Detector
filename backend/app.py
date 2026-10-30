@@ -32,6 +32,10 @@ FACE_MODEL_ID = os.getenv(
     "prithivMLmods/Deep-Fake-Detector-v2-Model",
 )
 
+# Keep the second, memory-heavy model disabled on small hosting instances.
+# Set ENABLE_FACE_MODEL=true only when the host has sufficient RAM.
+ENABLE_FACE_MODEL = os.getenv("ENABLE_FACE_MODEL", "false").strip().lower() == "true"
+
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_VIDEO_BYTES = 80 * 1024 * 1024
 MAX_IMAGE_PIXELS = 30_000_000
@@ -349,6 +353,22 @@ def classify_face_crops(
     if not boxes:
         return []
 
+    if not ENABLE_FACE_MODEL:
+        return [
+            {
+                "region": f"face_{index + 1}",
+                "box": box,
+                "status": "face_model_disabled",
+                "error": "Face-crop classification is disabled by ENABLE_FACE_MODEL=false.",
+                "warning": (
+                    "Face detection is available, but face-crop deepfake "
+                    "classification is disabled to reduce memory usage on "
+                    "small hosting instances."
+                ),
+            }
+            for index, box in enumerate(boxes)
+        ]
+
     try:
         classifier = get_face_classifier()
 
@@ -588,6 +608,7 @@ def health():
         "model_loaded": _classifier is not None,
         "model_id": MODEL_ID,
         "model_error": _model_error,
+        "face_model_enabled": ENABLE_FACE_MODEL,
         "face_model_loaded": _face_classifier is not None,
         "face_model_id": FACE_MODEL_ID,
         "face_model_error": _face_model_error,
