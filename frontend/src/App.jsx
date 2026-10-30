@@ -87,13 +87,15 @@ function humanize(value) {
 
   const labels = {
 
+    fake: "Model suggests AI-generated / fake",
+    real: "Model suggests real",
     model_suggests_ai_generated: "Model suggests AI-generated",
 
     model_suggests_human_or_real: "Model suggests human/real",
 
-    model_predicts_deepfake: "Model predicts deepfake",
+    model_predicts_deepfake: "Model suggests an AI-generated / fake-looking face crop (not proof of a face swap)",
 
-    model_predicts_realism: "Model predicts realism",
+    model_predicts_realism: "Model suggests a real-looking face crop (not proof of authenticity)",
 
     unmapped_label: "Unmapped model label",
 
@@ -186,12 +188,12 @@ function getClassScore(classification, acceptedLabels) {
 
 function getFrameSignals(frame) {
   const artificial = getClassScore(frame?.classification, [
-    "artificial", "ai generated", "synthetic", "generated",
+    "fake", "artificial", "ai generated", "synthetic", "generated",
   ]);
   const faces = (Array.isArray(frame?.face_results) ? frame.face_results : [])
     .map((face) => ({
       trackId: face.track_id,
-      score: getClassScore(face.classification, ["deepfake", "deep fake"]),
+      score: getClassScore(face.classification, ["fake", "deepfake", "deep fake"]),
       interpretation: face.interpretation,
     }))
     .filter((face) => face.score !== null);
@@ -569,9 +571,9 @@ function FaceAnalysisSummary({ summary }) {
 
         <div>
 
-          <h4>Face analysis summary</h4>
+          <h4>Face-crop analysis summary</h4>
 
-          <small>Predictions from detected face crops</small>
+          <small>Fake-vs-real estimates from detected face crops</small>
 
         </div>
 
@@ -601,7 +603,7 @@ function FaceAnalysisSummary({ summary }) {
 
       <p>
 
-        Mean deepfake-class score:{" "}
+        Mean face-crop fake-class score:{" "}
 
         <strong>{formatPercent(summary.mean_face_deepfake_score)}</strong>
 
@@ -609,7 +611,7 @@ function FaceAnalysisSummary({ summary }) {
 
       <p>
 
-        Mean realism-class score:{" "}
+        Mean face-crop real-class score:{" "}
 
         <strong>{formatPercent(summary.mean_face_realism_score)}</strong>
 
@@ -715,7 +717,7 @@ function TemporalAnalysisSummary({ summary }) {
 
               <p>
 
-                Mean deepfake-class score:{" "}
+                Mean face-crop fake-class score:{" "}
 
                 <strong>{formatPercent(track.mean_deepfake_score)}</strong>
 
@@ -723,7 +725,7 @@ function TemporalAnalysisSummary({ summary }) {
 
               <p>
 
-                Deepfake score range:{" "}
+                Face-crop fake-score range:{" "}
 
                 <strong>{formatPercent(track.deepfake_score_range)}</strong>
 
@@ -777,7 +779,6 @@ function EvidenceTimeline({ result }) {
           <h4><Clock3 size={17} /> Evidence timeline</h4>
           <small>Sampled frames and available face-analysis signals</small>
         </div>
-        <span className="pill">Threshold: {formatPercent(threshold)}</span>
       </div>
       <p className="muted">
         Highlighted markers mean a model score crossed the configured heuristic
@@ -1045,7 +1046,7 @@ function VideoSummary({ result }) {
 
           <p>
 
-            Mean artificial-class score:{" "}
+            Mean fake-class score:{" "}
 
             <strong>
 
@@ -1372,7 +1373,7 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
                   <ScanFace size={18} />
 
-                  Face manipulation analysis
+                  Face-crop AI/fake-vs-real signal
 
                 </h3>
 
@@ -1438,11 +1439,9 @@ function ResultPanel({ result, onClear, mediaPreview, videoThumbnail }) {
 
               different models. Their scores are not combined into a
 
-              single verdict. A face prediction of "Deepfake" does not
-
-              establish that a genuine photograph was manipulated, and a
-
-              "Realism" prediction does not prove authenticity.
+              single verdict. A face-crop "fake" prediction is an
+              AI-generated-vs-real estimate, not a dedicated face-swap finding.
+              A "real" prediction also does not prove authenticity.
 
             </p>
 
@@ -1913,20 +1912,23 @@ export default function App() {
         }
       `}</style>
 
-      
-<header className="topbar">
-  <a className="brand" href="#">
-    <img
-      src="/logo.png"
-      alt="MediaForensics AI Logo"
-      className="brand-logo"
-    />
+      <header className="topbar">
 
-    <span>
-      Media<span className="brand-accent">ForensicsAI</span>
-    </span>
-  </a>
+        <a className="brand" href="#">
 
+          <span className="brand-mark">
+
+            <ShieldCheck size={22} />
+
+          </span>
+
+          <span>
+
+            Media<span className="brand-accent">ForensicsAI</span>
+
+          </span>
+
+        </a>
 
         <div className="topbar-right">
           <span className="status-dot" />
@@ -1978,7 +1980,7 @@ export default function App() {
                   {[
                     "React.js", "Python", "FastAPI", "Machine Learning",
                     "Deep Learning", "Computer Vision", "OpenCV",
-                    "Hugging Face Transformers", "Render", "Netlify"
+                    "ONNX Runtime", "Hugging Face Hub", "Render", "Netlify"
                   ].map((technology) => <span key={technology}>{technology}</span>)}
                 </div>
               </div>
@@ -2029,7 +2031,7 @@ export default function App() {
 
             <Info size={16} />
 
-            This is an experimental detector, not proof of authenticity.
+            This is an experimental fake-vs-real estimator, not proof of authenticity.
 
           </div>
 
@@ -2317,13 +2319,12 @@ export default function App() {
 
               <div>
 
-                <strong>Face deepfake classification</strong>
+                <strong>Face-crop fake-vs-real estimate</strong>
 
                 <p>
 
-                  Detected face crops are analyzed separately when the
-
-                  face model is available.
+                  Detected face crops receive a separate AI-generated-vs-real
+                  estimate. This is not a validated face-swap detector.
 
                 </p>
 

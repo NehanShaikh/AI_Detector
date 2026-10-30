@@ -12,7 +12,8 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
-from transformers import pipeline
+import onnxruntime as ort
+from huggingface_hub import hf_hub_download
 
 
 # ============================================================
@@ -22,19 +23,10 @@ from transformers import pipeline
 APP_TITLE = "AI Media Forensics API"
 APP_VERSION = "0.8.0"
 
-MODEL_ID = os.getenv(
-    "MODEL_ID",
-    "umm-maybe/AI-image-detector",
-)
-
-FACE_MODEL_ID = os.getenv(
-    "FACE_MODEL_ID",
-    "prithivMLmods/Deep-Fake-Detector-v2-Model",
-)
-
-# Keep the second, memory-heavy model disabled on small hosting instances.
-# Set ENABLE_FACE_MODEL=true only when the host has sufficient RAM.
-ENABLE_FACE_MODEL = os.getenv("ENABLE_FACE_MODEL", "false").strip().lower() == "true"
+MODEL_ID = os.getenv("MODEL_ID", "Deckard618/imdet:pe_tiny")
+FACE_MODEL_ID = os.getenv("FACE_MODEL_ID", "Deckard618/imdet:pe_tiny (face crop)")
+ONNX_REPO_ID = os.getenv("ONNX_REPO_ID", "Deckard618/imdet")
+ONNX_MODEL_FILE = os.getenv("ONNX_MODEL_FILE", "pe_tiny/model.onnx")
 
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_VIDEO_BYTES = 80 * 1024 * 1024
@@ -66,8 +58,8 @@ IMAGE_MODEL_WARNING = (
 )
 
 FACE_MODEL_WARNING = (
-    "The face model provides an estimate for a detected face crop. "
-    "It is not proof that a face is genuine or manipulated. "
+    "The lightweight PE-Tiny fake/real detector is applied to a detected face crop. "
+    "This is not a dedicated or validated face-swap/deepfake detector. "
     "Its performance must be validated on representative data."
 )
 
@@ -116,65 +108,53 @@ app.add_middleware(
 
 _classifier = None
 _model_error = None
-
 _face_classifier = None
 _face_model_error = None
 
 
 def get_classifier():
-    """Load and cache the general image classifier."""
-    global _classifier, _model_error
-
+    """Load one small ONNX model and reuse it for full images and face crops."""
+    global _classifier, _model_error, _face_classifier
     if _classifier is not None:
         return _classifier
-
     if _model_error:
         raise RuntimeError(_model_error)
-
     try:
-        _classifier = pipeline(
-            "image-classification",
-            model=MODEL_ID,
-            device=-1,
+        model_path = hf_hub_download(
+            repo_id=ONNX_REPO_ID,
+            filename=ONNX_MODEL_FILE,
         )
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 1
+        options.inter_op_num_threads = 1
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        _classifier = ort.InferenceSession(
+            model_path,
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
+        )
+        # The same compact detector is used on face crops to avoid loading a
+        # second neural network. Face-crop output is an AI/fake-vs-real signal,
+        # not a validated face-swap detector.
+        _face_classifier = _classifier
         return _classifier
-
     except Exception as exc:
         _model_error = (
-            f"Could not load image model '{MODEL_ID}'. "
-            f"Check the model ID, internet connection, dependencies, "
-            f"available disk space, and RAM. "
+            f"Could not load ONNX model '{ONNX_REPO_ID}/{ONNX_MODEL_FILE}'. "
             f"Details: {type(exc).__name__}: {exc}"
         )
+        _face_model_error = _model_error
         raise RuntimeError(_model_error) from exc
 
 
 def get_face_classifier():
-    """Load and cache the face classifier."""
-    global _face_classifier, _face_model_error
-
-    if _face_classifier is not None:
-        return _face_classifier
-
-    if _face_model_error:
-        raise RuntimeError(_face_model_error)
-
+    """Return the shared lightweight ONNX session."""
+    global _face_model_error
     try:
-        _face_classifier = pipeline(
-            "image-classification",
-            model=FACE_MODEL_ID,
-            device=-1,
-        )
-        return _face_classifier
-
+        return get_classifier()
     except Exception as exc:
-        _face_model_error = (
-            f"Could not load face model '{FACE_MODEL_ID}'. "
-            f"Check the model ID, compatibility, internet connection, "
-            f"available disk space, and RAM. "
-            f"Details: {type(exc).__name__}: {exc}"
-        )
-        raise RuntimeError(_face_model_error) from exc
+        _face_model_error = str(exc)
+        raise
 
 
 # ============================================================
@@ -186,50 +166,41 @@ def run_classifier(
     image: Image.Image,
     model_id: str,
 ) -> dict[str, Any]:
-    """Run a model and normalize its predictions."""
-
-    raw_predictions = classifier(
-        image.convert("RGB"),
-        top_k=None,
+    """Run PE-Tiny ONNX inference with the model card's preprocessing."""
+    image = image.convert("RGB")
+    width, height = image.size
+    scale = 256.0 / min(width, height)
+    resized = image.resize(
+        (max(256, round(width * scale)), max(256, round(height * scale))),
+        Image.Resampling.BILINEAR,
     )
+    left = (resized.width - 256) // 2
+    top = (resized.height - 256) // 2
+    cropped = resized.crop((left, top, left + 256, top + 256))
+    array = np.asarray(cropped, dtype=np.float32) / 255.0
+    tensor = np.transpose(array, (2, 0, 1))[None, ...].astype(np.float32)
 
-    if isinstance(raw_predictions, dict):
-        raw_predictions = [raw_predictions]
-
-    predictions = sorted(
-        raw_predictions or [],
-        key=lambda item: float(item.get("score", 0)),
-        reverse=True,
-    )
-
-    if not predictions:
-        raise RuntimeError(
-            f"Model '{model_id}' returned no predictions."
-        )
-
-    top = predictions[0]
-
+    input_name = classifier.get_inputs()[0].name
+    logits = classifier.run(None, {input_name: tensor})[0][0].astype(np.float64)
+    logits -= np.max(logits)
+    probabilities = np.exp(logits)
+    probabilities /= max(float(np.sum(probabilities)), 1e-12)
+    # Model card: output index 0 = fake, index 1 = real.
+    predictions = [
+        {"label": "fake", "score": round(float(probabilities[0]), 5)},
+        {"label": "real", "score": round(float(probabilities[1]), 5)},
+    ]
+    predictions.sort(key=lambda item: item["score"], reverse=True)
     return {
-        "top_label": str(top.get("label", "unknown")),
-        "top_score": round(float(top.get("score", 0)), 5),
-        "predictions": [
-            {
-                "label": str(item.get("label", "unknown")),
-                "score": round(float(item.get("score", 0)), 5),
-            }
-            for item in predictions[:10]
-        ],
+        "top_label": predictions[0]["label"],
+        "top_score": predictions[0]["score"],
+        "predictions": predictions,
         "model_id": model_id,
     }
 
 
 def classify_image(image: Image.Image) -> dict[str, Any]:
-    return run_classifier(
-        get_classifier(),
-        image,
-        MODEL_ID,
-    )
-
+    return run_classifier(get_classifier(), image, MODEL_ID)
 
 def assess_label(label: str, model_type: str) -> str:
     """
@@ -245,10 +216,10 @@ def assess_label(label: str, model_type: str) -> str:
     normalized = " ".join(normalized.split())
 
     if model_type == "face":
-        if normalized in {"deepfake", "deep fake"}:
+        if normalized in {"deepfake", "deep fake", "fake", "ai generated"}:
             return "model_predicts_deepfake"
 
-        if normalized == "realism":
+        if normalized in {"realism", "real"}:
             return "model_predicts_realism"
 
         return "unmapped_label"
@@ -259,6 +230,7 @@ def assess_label(label: str, model_type: str) -> str:
             "ai generated",
             "synthetic",
             "generated",
+            "fake",
         }:
             return "model_suggests_ai_generated"
 
@@ -352,22 +324,6 @@ def classify_face_crops(
 
     if not boxes:
         return []
-
-    if not ENABLE_FACE_MODEL:
-        return [
-            {
-                "region": f"face_{index + 1}",
-                "box": box,
-                "status": "face_model_disabled",
-                "error": "Face-crop classification is disabled by ENABLE_FACE_MODEL=false.",
-                "warning": (
-                    "Face detection is available, but face-crop deepfake "
-                    "classification is disabled to reduce memory usage on "
-                    "small hosting instances."
-                ),
-            }
-            for index, box in enumerate(boxes)
-        ]
 
     try:
         classifier = get_face_classifier()
@@ -495,7 +451,7 @@ def build_report_metadata(media_type: str, filename: str | None) -> dict[str, An
     """Metadata to make an exported report easier to identify and audit."""
     return {
         "report_version": "1.0",
-        "project_phase": "Phase 5 - Forensic Report and Evidence Visualization",
+        "project_phase": "MediaForensicsAI Forensic Analysis",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "media_type": media_type,
         "filename": safe_filename(filename),
@@ -513,8 +469,8 @@ def build_video_evidence_summary(results: list[dict[str, Any]]) -> dict[str, Any
     failed_frames = 0
     evidence_items = []
 
-    artificial_labels = {"artificial", "ai generated", "synthetic", "generated"}
-    deepfake_labels = {"deepfake", "deep fake"}
+    artificial_labels = {"artificial", "ai generated", "synthetic", "generated", "fake"}
+    deepfake_labels = {"deepfake", "deep fake", "fake"}
 
     for item in results:
         frame_index = item.get("frame_index")
@@ -594,7 +550,7 @@ def root():
     return {
         "name": APP_TITLE,
         "version": APP_VERSION,
-        "phase": "Phase 5 - Forensic Report and Evidence Visualization",
+        "description": "AI image, face, and sampled-video analysis",
         "docs": "/docs",
         "health": "/health",
     }
@@ -608,8 +564,9 @@ def health():
         "model_loaded": _classifier is not None,
         "model_id": MODEL_ID,
         "model_error": _model_error,
-        "face_model_enabled": ENABLE_FACE_MODEL,
         "face_model_loaded": _face_classifier is not None,
+        "inference_runtime": "onnxruntime-cpu",
+        "shared_model_session": _classifier is not None and _classifier is _face_classifier,
         "face_model_id": FACE_MODEL_ID,
         "face_model_error": _face_model_error,
         "video_analysis": {
@@ -728,13 +685,15 @@ async def analyze_image(
         "region_analysis_note": (
             "Face boxes are detected using OpenCV Haar cascades. "
             "The overall image model and face-crop model are separate. "
-            "The face model has not been validated for every type of "
+            "The PE-Tiny model has not been validated for every type of "
             "AI-generated face or face manipulation. No validated "
             "background-only manipulation detector is included."
         ),
         "warnings": [
             IMAGE_MODEL_WARNING,
             FACE_MODEL_WARNING,
+            "PE-Tiny was reported on face-focused DeepDetect-25 data; whole-image performance on arbitrary scenes is not established by that benchmark.",
+            "The same lightweight fake/real model is applied to detected face crops; this is not a separately validated face-swap detector.",
             "Model scores are not guaranteed probabilities of authenticity.",
             "A face-crop prediction does not prove that a face was swapped.",
             "A real-looking prediction does not prove an image is genuine.",
@@ -745,8 +704,9 @@ async def analyze_image(
             "Face detection may miss faces or detect them inaccurately.",
             "Small or low-resolution faces may be difficult to classify.",
             "Performance may vary across datasets and manipulation methods.",
+            "The PE-Tiny model may miss newer generators and has not been independently validated on this application dataset.",
             "The overall image model may not detect every AI-generated image.",
-            "The face model may not reliably detect fully AI-generated faces.",
+            "The PE-Tiny model may not reliably detect fully AI-generated faces or face swaps.",
             "Image analysis does not establish image provenance.",
         ],
     }
@@ -819,7 +779,7 @@ def summarize_video_frames(
 
         artificial_score = get_prediction_score(
             classification,
-            {"artificial", "ai generated", "synthetic", "generated"},
+            {"artificial", "ai generated", "synthetic", "generated", "fake"},
         )
         human_score = get_prediction_score(
             classification,
@@ -911,7 +871,7 @@ def summarize_video_face_results(results: list[dict[str, Any]]) -> dict[str, Any
             elif interpretation == "model_predicts_realism":
                 predicts_realism += 1
 
-            deepfake_score = get_prediction_score(classification, {"deepfake", "deep fake"})
+            deepfake_score = get_prediction_score(classification, {"deepfake", "deep fake", "fake"})
             realism_score = get_prediction_score(classification, {"realism", "real"})
             if deepfake_score is not None:
                 deepfake_scores.append(deepfake_score)
@@ -953,8 +913,8 @@ def summarize_video_face_results(results: list[dict[str, Any]]) -> dict[str, Any
         "verdict_threshold": VERDICT_THRESHOLD,
         "note": (
             "This threshold-based signal is a heuristic, not a calibrated probability. "
-            "The face model can produce false positives and has not been validated "
-            "for this video domain."
+            "The PE-Tiny face-crop signal can produce false positives and has not been validated "
+            "as a face-swap detector or for this video domain."
         ),
     }
 
@@ -1055,7 +1015,7 @@ def track_faces_across_sampled_frames(
             face["track_id"] = best_track_id
             classification = face.get("classification")
             deepfake_score = (
-                get_prediction_score(classification, {"deepfake", "deep fake"})
+                get_prediction_score(classification, {"deepfake", "deep fake", "fake"})
                 if isinstance(classification, dict)
                 else None
             )
@@ -1484,6 +1444,7 @@ async def analyze_video(
                 "type": "sampled_frame_classification_face_crop_analysis_and_heuristic_tracking",
                 "model_id": MODEL_ID,
                 "face_model_id": FACE_MODEL_ID,
+                "inference_runtime": "onnxruntime-cpu",
                 "dedicated_video_model": False,
                 "temporal_analysis": True,
                 "temporal_analysis_type": "heuristic_face_track_score_consistency",
@@ -1500,7 +1461,7 @@ async def analyze_video(
                 "No optical-flow, facial-landmark, lip-sync, audio-video synchronization, or dedicated temporal deepfake model is used.",
                 "Heuristic face tracks may switch identities or lose track when faces move or detections fail.",
                 "Face detection is limited to candidate regions found by an OpenCV Haar cascade.",
-                "The face classifier is run on detected face crops, but has not been validated for this video domain.",
+                "The same PE-Tiny fake/real model is run on detected face crops; it is not a dedicated or validated face-swap classifier.",
                 "The 65% verdict threshold is a demo heuristic, not a calibrated probability of authenticity.",
                 "A likely-real or likely-fake verdict can be wrong; validate on a labeled test set before relying on it.",
                 "Frame predictions do not prove that a video or person is fake.",
