@@ -916,3 +916,54 @@ canvas {
     overflow-wrap: anywhere;
   }
 }
+
+
+/* Fix face-tracking result cards on mobile */
+@media (max-width: 600px) {
+  .region-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .region-card > div:first-child {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .region-prediction {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .region-card strong,
+  .region-card small,
+  .region-prediction span,
+  .region-card .pill {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .region-card .pill {
+  display: inline-block;
+  width: auto;
+  max-width: 100%;
+  align-self: flex-start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  }
+}
