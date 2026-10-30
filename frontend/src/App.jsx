@@ -31,6 +31,9 @@ import {
   Clock3,
 
   BarChart3,
+  Mail,
+  ArrowLeft,
+  Code2,
 
 } from "lucide-react";
 
@@ -540,7 +543,7 @@ function VideoFrameCard({ frame }) {
 
 // ============================================================
 
-// Phase 4 summaries: face predictions and heuristic temporal tracking.
+// Video summaries: face predictions and heuristic temporal tracking.
 
 function FaceAnalysisSummary({ summary }) {
 
@@ -1573,6 +1576,7 @@ export default function App() {
   const [result, setResult] = useState(null);
 
   const [dragging, setDragging] = useState(false);
+  const [showCredits, setShowCredits] = useState(false);
 
   useEffect(() => {
     setVideoThumbnail("");
@@ -1874,6 +1878,26 @@ export default function App() {
         .report-media h4 { margin:0 0 10px; }
         .report-media img { display:block; width:auto; max-width:100%; max-height:420px; object-fit:contain; margin:0 auto; border-radius:8px; }
         .report-media small { display:block; margin-top:8px; text-align:center; opacity:.75; }
+        .topbar { gap:16px; flex-wrap:wrap; }
+        .topbar-right { display:flex; align-items:center; gap:12px; }
+        .brand { text-decoration:none; }
+        .brand-accent { color:var(--accent, #6478ff); }
+        .nav-button { border:1px solid var(--border, #d7dce2); background:var(--panel, #fff); color:inherit; border-radius:10px; padding:9px 14px; font:inherit; font-weight:600; cursor:pointer; }
+        .nav-button:hover { border-color:var(--accent, #6478ff); }
+        .credits-page { max-width:900px; margin:34px auto 60px; }
+        .credits-card { border:1px solid var(--border, #d7dce2); border-radius:22px; padding:clamp(22px,4vw,42px); background:var(--panel, #fff); box-shadow:0 12px 36px rgba(15,23,42,.06); }
+        .credits-profile { text-align:center; padding:12px 0 28px; }
+        .credits-avatar { width:76px; height:76px; margin:0 auto 16px; display:grid; place-items:center; border-radius:22px; background:linear-gradient(135deg,#172554,#4f46e5); color:white; }
+        .credits-profile h1 { margin:0 0 8px; font-size:clamp(1.8rem,4vw,2.5rem); }
+        .credits-role { margin:0; font-weight:650; }
+        .credits-email { display:inline-flex; align-items:center; gap:8px; margin-top:14px; color:inherit; text-decoration:none; overflow-wrap:anywhere; }
+        .credits-section { border-top:1px solid var(--border, #d7dce2); padding:22px 0 4px; }
+        .credits-section h2 { margin:0 0 12px; font-size:1.15rem; }
+        .credits-section p { line-height:1.75; }
+        .credits-stack { display:flex; flex-wrap:wrap; gap:9px; }
+        .credits-stack span { border:1px solid var(--border, #d7dce2); border-radius:999px; padding:7px 12px; font-size:.9rem; }
+        .credits-back { display:inline-flex; align-items:center; gap:8px; margin-bottom:16px; }
+        @media (max-width:600px) { .topbar-right { width:100%; justify-content:space-between; } }
         @media print {
           .report-media { break-inside:avoid; border-color:#bbb !important; }
           .report-media img { max-height:360px; }
@@ -1901,26 +1925,79 @@ export default function App() {
 
           <span>
 
-            Media<span className="brand-accent">Forensics</span>
+            Media<span className="brand-accent">ForensicsAI</span>
 
           </span>
 
         </a>
 
         <div className="topbar-right">
-
           <span className="status-dot" />
-
-          Local AI analysis prototype
-
-          <span className="version">PHASE 5</span>
-
+          <span>AI-Powered Media Analysis</span>
+          <button
+            type="button"
+            className="nav-button"
+            onClick={() => setShowCredits((current) => !current)}
+          >
+            {showCredits ? "Home" : "Credits"}
+          </button>
         </div>
 
       </header>
 
       <main className="main-content">
-
+        {showCredits ? (
+          <section className="credits-page">
+            <button
+              type="button"
+              className="nav-button credits-back"
+              onClick={() => setShowCredits(false)}
+            >
+              <ArrowLeft size={16} /> Back to Home
+            </button>
+            <div className="credits-card">
+              <div className="credits-profile">
+                <div className="credits-avatar"><Code2 size={34} /></div>
+                <h1>Nehan Shaikh</h1>
+                <p className="credits-role">Software Engineer (AI &amp; ML)</p>
+                <a className="credits-email" href="mailto:nehanshaikh07@gmail.com">
+                  <Mail size={17} /> nehanshaikh07@gmail.com
+                </a>
+                <p className="muted">Developer &amp; Creator of MediaForensicsAI</p>
+              </div>
+              <div className="credits-section">
+                <h2>About MediaForensicsAI</h2>
+                <p>
+                  MediaForensicsAI is an AI-powered media analysis platform that examines
+                  images and videos for model-detected indicators associated with AI
+                  generation and possible digital manipulation. It provides separate
+                  image, face-level, and sampled-video-frame analysis to support
+                  informed review.
+                </p>
+              </div>
+              <div className="credits-section">
+                <h2>Technology Stack</h2>
+                <div className="credits-stack">
+                  {[
+                    "React.js", "Python", "FastAPI", "Machine Learning",
+                    "Deep Learning", "Computer Vision", "OpenCV",
+                    "Hugging Face Transformers", "Render", "Netlify"
+                  ].map((technology) => <span key={technology}>{technology}</span>)}
+                </div>
+              </div>
+              <div className="credits-section">
+                <h2>Project Credits</h2>
+                <p>
+                  Concept, development, and integration by <strong>Nehan Shaikh</strong>.
+                  The project uses pretrained machine-learning models and open-source
+                  software libraries. Model outputs are estimates and should not be
+                  treated as definitive proof of authenticity or manipulation.
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <>
         <section className="hero">
 
           <div className="hero-badge">
@@ -2329,7 +2406,7 @@ export default function App() {
 
             <CheckCircle2 size={18} />
 
-            <span>Database-free prototype</span>
+            <span>No account required</span>
 
           </div>
 
@@ -2350,12 +2427,13 @@ export default function App() {
           </div>
 
         </section>
-
+          </>
+        )}
       </main>
 
       <footer>
 
-        <span>MediaForensics · Experimental research prototype</span>
+        <span>MediaForensicsAI · AI-Powered Media Analysis</span>
 
         <span>Predictions are estimates, not verification.</span>
 
@@ -2366,4 +2444,3 @@ export default function App() {
   );
 
 }
-
